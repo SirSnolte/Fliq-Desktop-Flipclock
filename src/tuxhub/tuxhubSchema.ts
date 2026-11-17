@@ -3,6 +3,7 @@
 import { LOCALE_OPTIONS, UI_LANGUAGE_OPTIONS, FONT_OPTIONS, TEMPERATURE_UNIT_OPTIONS, SLIDER_CONFIGS } from "../settings/options.ts";
 import { LAYOUT_KEYS } from "../layout/LayoutMigration.ts";
 import { LayoutValidator } from "../layout/LayoutValidator.ts";
+import type { SavedLayout } from "../layout/LayoutLibrary.ts";
 
 type Locale = "en" | "de";
 type Text = Record<Locale, string>;
@@ -242,7 +243,83 @@ const MESSAGES = {
     length: { en: "At most {max} characters.", de: "Höchstens {max} Zeichen." },
     color: { en: "Expected a color like #rrggbbaa.", de: "Erwartet eine Farbe wie #rrggbbaa." },
     layout: { en: "This layout does not fit Fliq's grid.", de: "Dieses Layout passt nicht in Fliqs Raster." },
+    savedLayouts: {
+        en: "Expected at most 50 saved layouts, each with its own id, a name of 1 to 80 characters and a layout that fits Fliq's grid.",
+        de: "Erwartet höchstens 50 gespeicherte Layouts, jedes mit eigener Id, einem Namen mit 1 bis 80 Zeichen und einem Layout, das in Fliqs Raster passt.",
+    },
+    activeLayoutId: { en: "Expected none or the id of a saved layout.", de: "Erwartet keines oder die Id eines gespeicherten Layouts." },
+    readOnly: { en: "This setting can only be changed in Fliq.", de: "Diese Einstellung lässt sich nur in Fliq ändern." },
 };
+
+// Saved layouts tuxhub may write at most, and the longest name.
+const MAX_SAVED_LAYOUTS = 50;
+const MAX_LAYOUT_NAME = 80;
+
+// One calendar as tuxhub sees it: everything of a calendar source except its secret link.
+export interface CalendarListEntry
+{
+    id: string;
+    name: string;
+    color: string;
+    enabled: boolean;
+}
+
+/**
+ * The calendar sources without their links, for `settings.get` and `settings-changed`
+ * (`calendarList`). Built from an allow list, so whatever a source carries besides these four
+ * fields never leaves Fliq.
+ */
+export function calendarListOf(sources: unknown): CalendarListEntry[]
+{
+    if (!Array.isArray(sources))
+    {
+        return [];
+    }
+    const objects = sources.filter((source): source is Record<string, unknown> => Boolean(source) && typeof source === "object");
+    return objects.map((source) => ({
+        id: String(source.id),
+        name: String(source.name),
+        color: String(source.color),
+        enabled: source.enabled === true,
+    }));
+}
+
+// What `checkStored` needs to know of the stored settings besides the value.
+export interface StoredContext
+{
+    savedLayouts?: unknown;
+}
+
+function savedLayouts(key: string, value: unknown, lang: Locale): SavedLayout[]
+{
+    const refuse = () => new Refusal(key, MESSAGES.savedLayouts[lang]);
+    if (!Array.isArray(value) || value.length > MAX_SAVED_LAYOUTS)
+    {
+        throw refuse();
+    }
+    const ids = new Set<number>();
+    const validator = new LayoutValidator();
+    return value.map((entry: unknown) =>
+    {
+        const saved = (entry && typeof entry === "object" && !Array.isArray(entry) ? entry : {}) as Record<string, unknown>;
+        const { id, name } = saved;
+        const layout = validator.validated(saved.layout);
+        const validId = typeof id === "number" && Number.isInteger(id) && id >= 1 && !ids.has(id);
+        const validName = typeof name === "string" && name.trim().length > 0 && [...name].length <= MAX_LAYOUT_NAME;
+        if (!validId || !validName || layout === null)
+        {
+            throw refuse();
+        }
+        ids.add(id as number);
+        return { id: id as number, name: name as string, layout };
+    });
+}
+
+/** The active layout after the saved layouts changed: none when it is no longer among them. */
+export function activeAfterSaved(activeId: number | null, layouts: SavedLayout[]): number | null
+{
+    return layouts.some((saved) => saved.id === activeId) ? activeId : null;
+}
 
 /**
  * Checks a value for `set` and returns it as Fliq stores it: numbers rounded to whole steps,
@@ -281,19 +358,37 @@ export function check(key: string, value: unknown, locale: unknown = "en"): unkn
 
 /**
  * Checks a value for `settings.set`. Besides the schema fields tuxhub may write the block
- * layout. Everything else Fliq stores
- * (the weather caches) is not writable from outside.
+ * layout, the saved layouts (each layout checked by the LayoutValidator) and which of them is
+ * active. Everything else Fliq stores (the weather caches, the calendar sources with their
+ * secret links, the calendar list built from them) is not writable from outside.
  */
-export function checkStored(key: string, value: unknown, locale: unknown = "en"): unknown 
+export function checkStored(key: string, value: unknown, locale: unknown = "en", context: StoredContext = {}): unknown
 {
-    if (key !== LAYOUT_KEYS.layout)
+    const lang = toLocale(locale);
+    switch (key)
     {
-        return check(key, value, locale);
+        case LAYOUT_KEYS.layout:
+        {
+            const layout = new LayoutValidator().validated(value);
+            if (layout === null)
+            {
+                throw new Refusal(key, MESSAGES.layout[lang]);
+            }
+            return layout;
+        }
+        case "savedLayouts":
+            return savedLayouts(key, value, lang);
+        case "activeLayoutId":
+        {
+            const layouts = Array.isArray(context.savedLayouts) ? (context.savedLayouts as SavedLayout[]) : [];
+            if (value !== null && !layouts.some((saved) => saved.id === value))
+            {
+                throw new Refusal(key, MESSAGES.activeLayoutId[lang]);
+            }
+            return value;
+        }
+        case "calendarList":
+            throw new Refusal(key, MESSAGES.readOnly[lang]);
     }
-    const layout = new LayoutValidator().validated(value);
-    if (layout === null)
-    {
-        throw new Refusal(key, MESSAGES.layout[toLocale(locale)]);
-    }
-    return layout;
+    return check(key, value, locale);
 }

@@ -16,9 +16,9 @@ test("schema covers every stored setting except caches", () =>
 {
     const atoms = readFileSync(new URL("../src/settings/atoms.ts", import.meta.url), "utf8");
     const stored = [...atoms.matchAll(/atomWithStorage(?:<[^>]*>)?\("([^"]+)"/g)].map((m) => m[1]);
-    // Caches, the block layout and the saved layouts, which only the styling window edits, and the picked weather
-    // place (tuxhub sets the location as text, which replaces the place). Calendars hold secret
-    // links and are managed in the settings window only.
+    // Caches, the block layout and the saved layouts (reached through settings.get/set only, not
+    // the schema), and the picked weather place (tuxhub sets the location as text, which replaces
+    // the place). Calendars hold secret links and are managed in the settings window only.
     const caches = ["weatherReport", "sunDays", "clockLayout", "savedLayouts", "activeLayoutId", "weatherPlace", "calendarSources", "calendarFeeds"];
     const keys = fields(schema("en")).map((f) => f.key);
     for (const key of stored.filter((k) => !caches.includes(k))) 
@@ -196,14 +196,12 @@ test("calendar links and caches stay out of reach of the socket", () =>
 {
     // calendarSources hold secret ICS links, calendarFeeds the events read from them.
     const secret = ["calendarSources", "calendarFeeds"];
-    for (const key of [...secret, "weatherPlace", "savedLayouts", "activeLayoutId"])
+    for (const key of [...secret, "weatherPlace"])
     {
         assert.throws(() => checkStored(key, []), (error: unknown) => error instanceof Refusal && error.field === key, key);
     }
-    // `settings.get` and `settings-changed` only carry the keys of these two maps.
+    // The events never reach the bridge; the sources only as calendarList without their links
+    // (tests/tuxhub-library.test.ts).
     const bridge = readFileSync(new URL("../src/tuxhub/TuxhubBridge.ts", import.meta.url), "utf8");
-    for (const atom of ["CALENDAR_SOURCES", "CALENDAR_FEEDS"])
-    {
-        assert.equal(bridge.includes(`ATOMS.${atom}`), false, atom);
-    }
+    assert.equal(bridge.includes("ATOMS.CALENDAR_FEEDS"), false);
 });

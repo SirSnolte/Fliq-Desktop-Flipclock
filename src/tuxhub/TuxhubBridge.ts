@@ -6,7 +6,8 @@ import { ATOMS } from "../settings/atoms";
 import { AppActions } from "../settings/AppActions";
 import { SettingsReset } from "../settings/SettingsReset";
 import { LAYOUT_KEYS } from "../layout/LayoutMigration";
-import { schema, check, checkStored, toLocale, Refusal, ACTION_IDS } from "./tuxhubSchema.ts";
+import type { SavedLayout } from "../layout/LayoutLibrary";
+import { schema, check, checkStored, toLocale, Refusal, ACTION_IDS, activeAfterSaved, calendarListOf } from "./tuxhubSchema.ts";
 
 interface Request
 {
@@ -52,12 +53,16 @@ const SETTINGS: Record<string, Setting> = {
     alwaysOnTop: ATOMS.ALWAYS_ON_TOP,
 };
 
-// What Fliq stores besides the schema fields: the block layout, and the weather caches the
-// layout editor needs to draw weather blocks. Only `settings.get` returns these.
+// What Fliq stores besides the schema fields: the block layout, the saved layouts and which of
+// them is active, and the weather caches the layout editor needs to draw weather blocks. Only
+// `settings.get` returns these.
 // Calendar sources (secret ICS links) and the events read from them are left out on purpose:
-// nothing outside the settings window may read or write them (tests/tuxhub-schema.test.ts).
+// nothing outside the settings window may read or write them. tuxhub gets the read-only
+// `calendarList` instead, the sources without their links (tests/tuxhub-library.test.ts).
 const STORED_ONLY: Record<string, Setting> = {
     [LAYOUT_KEYS.layout]: ATOMS.CLOCK_LAYOUT,
+    savedLayouts: ATOMS.SAVED_LAYOUTS,
+    activeLayoutId: ATOMS.ACTIVE_LAYOUT_ID,
     weatherReport: ATOMS.WEATHER_REPORT,
     sunDays: ATOMS.SUN_DAYS,
 };
@@ -120,6 +125,7 @@ export class TuxhubBridge
         {
             this.keep(this.store.sub(atom, () => this.reportStoredChange(key, atom)));
         }
+        this.keep(this.store.sub(ATOMS.CALENDAR_SOURCES, () => this.reportCalendarList()));
     }
 
     private stop(): void
@@ -150,6 +156,13 @@ export class TuxhubBridge
     private reportStoredChange(key: string, atom: Setting): void
     {
         invoke("tuxhub_settings_changed", { values: { [key]: this.store.get(atom) }, exclude: this.origin })
+            .catch((error) => console.error("tuxhub_settings_changed failed:", error));
+    }
+
+    // Calendars added, renamed or switched in the settings window.
+    private reportCalendarList(): void
+    {
+        invoke("tuxhub_settings_changed", { values: { calendarList: calendarListOf(this.store.get(ATOMS.CALENDAR_SOURCES)) }, exclude: null })
             .catch((error) => console.error("tuxhub_settings_changed failed:", error));
     }
 
@@ -203,7 +216,7 @@ export class TuxhubBridge
             {
                 const key = typeof params.key === "string" ? params.key : "";
                 // Refusal messages are English for these keys, whatever language tuxhub uses.
-                const value = checkStored(key, params.value, "en");
+                const value = checkStored(key, params.value, "en", { savedLayouts: this.store.get(ATOMS.SAVED_LAYOUTS) });
                 await this.applyStored(key, value, request.conn);
                 return { result: { value } };
             }
@@ -281,6 +294,17 @@ export class TuxhubBridge
         {
             this.origin = null;
         }
+        if (key === "savedLayouts")
+        {
+            // Like deleting the active layout in the settings window: none is active any more.
+            // Reported to every connection, the sender included, which did not set it itself.
+            const active = this.store.get(ATOMS.ACTIVE_LAYOUT_ID);
+            const next = activeAfterSaved(active, value as SavedLayout[]);
+            if (next !== active)
+            {
+                this.store.set(ATOMS.ACTIVE_LAYOUT_ID, next);
+            }
+        }
     }
 
     // Every stored setting, the overlay state and the version.
@@ -292,6 +316,7 @@ export class TuxhubBridge
         {
             values[key] = this.store.get(atom);
         }
+        values.calendarList = calendarListOf(this.store.get(ATOMS.CALENDAR_SOURCES));
         return { values, overlay, version: await getVersion() };
     }
 
