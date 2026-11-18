@@ -251,6 +251,11 @@ const MESSAGES = {
     readOnly: { en: "This setting can only be changed in Fliq.", de: "Diese Einstellung lässt sich nur in Fliq ändern." },
 };
 
+// Longest calendar name in the calendar list, and the color of a calendar without a valid one.
+const MAX_CALENDAR_NAME = 200;
+const NEUTRAL_COLOR = "#808080ff";
+const COLOR_PATTERN = /^#([0-9a-f]{6}|[0-9a-f]{8})$/i;
+
 // Saved layouts tuxhub may write at most, and the longest name.
 const MAX_SAVED_LAYOUTS = 50;
 const MAX_LAYOUT_NAME = 80;
@@ -278,8 +283,9 @@ export function calendarListOf(sources: unknown): CalendarListEntry[]
     const objects = sources.filter((source): source is Record<string, unknown> => Boolean(source) && typeof source === "object");
     return objects.map((source) => ({
         id: String(source.id),
-        name: String(source.name),
-        color: String(source.color),
+        // The settings window has no limit on names; tuxhub takes up to 200 characters.
+        name: [...String(source.name)].slice(0, MAX_CALENDAR_NAME).join(""),
+        color: COLOR_PATTERN.test(String(source.color)) ? String(source.color) : NEUTRAL_COLOR,
         enabled: source.enabled === true,
     }));
 }
@@ -298,6 +304,8 @@ function savedLayouts(key: string, value: unknown, lang: Locale): SavedLayout[]
         throw refuse();
     }
     const ids = new Set<number>();
+    // Names are unique, as the settings window keeps them (LayoutLibrary.uniqueName).
+    const names = new Set<string>();
     const validator = new LayoutValidator();
     return value.map((entry: unknown) =>
     {
@@ -305,12 +313,13 @@ function savedLayouts(key: string, value: unknown, lang: Locale): SavedLayout[]
         const { id, name } = saved;
         const layout = validator.validated(saved.layout);
         const validId = typeof id === "number" && Number.isInteger(id) && id >= 1 && !ids.has(id);
-        const validName = typeof name === "string" && name.trim().length > 0 && [...name].length <= MAX_LAYOUT_NAME;
+        const validName = typeof name === "string" && name.trim().length > 0 && [...name].length <= MAX_LAYOUT_NAME && !names.has(name.trim());
         if (!validId || !validName || layout === null)
         {
             throw refuse();
         }
         ids.add(id as number);
+        names.add((name as string).trim());
         return { id: id as number, name: name as string, layout };
     });
 }

@@ -104,7 +104,9 @@ gtk-layer-shell, X11 fallback). macOS is not shipped. Meant to grow into a widge
   shared by context menu and tuxhub), `SettingsReset`.
 - `src/tuxhub/` — live settings interface for tuxhub (Linux): `TuxhubBridge`, `tuxhubSchema`.
   `settings.get`/`settings.set`/`settings.reset` reach every stored setting including the
-  layout; a layout from outside is checked by `src/layout/LayoutValidator` first.
+  layout and the saved layouts; a layout from outside is checked by
+  `src/layout/LayoutValidator` first. Calendar sources (secret links) never reach the socket:
+  tuxhub reads the read-only `calendarList` (id, name, color, enabled; `calendarListOf`).
 - `src-tauri/src/` — `lib.rs` (app setup), `commands.rs` (everything `invoke` calls),
   `overlay/` (layer-shell, monitors, ghosts; ghosts are created on the first drag and destroyed
   30 s after the last one), `tuxhub.rs` (socket server).

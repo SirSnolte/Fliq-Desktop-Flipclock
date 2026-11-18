@@ -28,16 +28,19 @@ test("F1: the calendar list carries id, name, color and state, never the link", 
     // Whatever else a source may carry later stays out too.
     assert.deepEqual(calendarListOf([{ ...SOURCES[0], token: "x", headers: { a: 1 } }]), [list[0]]);
     assert.deepEqual(calendarListOf("not a list"), []);
+    // Names are cut to 200 characters and colors that are no hex color become neutral, so one
+    // odd entry never makes tuxhub refuse the whole list.
+    const [odd] = calendarListOf([{ ...SOURCES[0], name: "n".repeat(250), color: "red" }]);
+    assert.equal([...odd.name].length, 200);
+    assert.equal(odd.color, "#808080ff");
 });
 
 test("F1, F3: the bridge reads calendar sources only through the list and reports changes of them", () =>
 {
     const bridge = readFileSync(new URL("../src/tuxhub/TuxhubBridge.ts", import.meta.url), "utf8");
-    const reads = bridge.match(/ATOMS\.CALENDAR_SOURCES/g) ?? [];
-    const wrapped = bridge.match(/calendarListOf\(this\.store\.get\(ATOMS\.CALENDAR_SOURCES\)\)/g) ?? [];
-    assert.ok(reads.length >= 2, "the bridge reads and watches the calendar sources");
-    // Every read goes through calendarListOf, apart from the one subscription that reports changes.
-    assert.equal(reads.length - wrapped.length, 1);
+    // One read, through the allow list, and one subscription that reports changes.
+    assert.equal(bridge.match(/this\.store\.get\(ATOMS\.CALENDAR_SOURCES\)/g)?.length, 1);
+    assert.match(bridge, /calendarListOf\(this\.store\.get\(ATOMS\.CALENDAR_SOURCES\)\)/);
     assert.match(bridge, /this\.store\.sub\(ATOMS\.CALENDAR_SOURCES, /);
     assert.equal(bridge.includes("ATOMS.CALENDAR_FEEDS"), false);
 });
@@ -64,14 +67,15 @@ test("F4: saved layouts are written only when every entry fits, the layouts as t
     const entry = (fields: Record<string, unknown>) => ({ id: 1, name: "A", layout, ...fields });
     refusedStored("savedLayouts", [entry({ layout: { columns: 99, rows: 1, blocks: [] } })]);
     refusedStored("savedLayouts", [entry({}), entry({ name: "B" })]);
+    refusedStored("savedLayouts", [entry({}), entry({ id: 2, name: " A " })]);
     refusedStored("savedLayouts", [entry({ name: "   " })]);
     refusedStored("savedLayouts", [entry({ name: "x".repeat(81) })]);
     refusedStored("savedLayouts", [entry({ id: 0 })]);
     refusedStored("savedLayouts", [entry({ id: 1.5 })]);
     refusedStored("savedLayouts", [entry({ name: 7 })]);
-    refusedStored("savedLayouts", Array.from({ length: 51 }, (_, i) => entry({ id: i + 1 })));
+    refusedStored("savedLayouts", Array.from({ length: 51 }, (_, i) => entry({ id: i + 1, name: `L${i}` })));
     refusedStored("savedLayouts", "layouts");
-    assert.equal(checkStored("savedLayouts", Array.from({ length: 50 }, (_, i) => entry({ id: i + 1 }))).length, 50);
+    assert.equal(checkStored("savedLayouts", Array.from({ length: 50 }, (_, i) => entry({ id: i + 1, name: `L${i}` }))).length, 50);
 });
 
 test("F5: the active layout is none or one of the saved layouts", () =>

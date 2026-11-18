@@ -162,8 +162,14 @@ export class TuxhubBridge
     // Calendars added, renamed or switched in the settings window.
     private reportCalendarList(): void
     {
-        invoke("tuxhub_settings_changed", { values: { calendarList: calendarListOf(this.store.get(ATOMS.CALENDAR_SOURCES)) }, exclude: null })
+        invoke("tuxhub_settings_changed", { values: { calendarList: this.calendarList() }, exclude: null })
             .catch((error) => console.error("tuxhub_settings_changed failed:", error));
+    }
+
+    // The only read of the calendar sources: through the allow list, never with their links.
+    private calendarList(): ReturnType<typeof calendarListOf>
+    {
+        return calendarListOf(this.store.get(ATOMS.CALENDAR_SOURCES));
     }
 
     private async answer(request: Request): Promise<void>
@@ -316,7 +322,7 @@ export class TuxhubBridge
         {
             values[key] = this.store.get(atom);
         }
-        values.calendarList = calendarListOf(this.store.get(ATOMS.CALENDAR_SOURCES));
+        values.calendarList = this.calendarList();
         return { values, overlay, version: await getVersion() };
     }
 
